@@ -110,6 +110,8 @@ function LiveAuctionContent() {
       return undefined;
     }
 
+    let isMounted = true;
+
     const realtime = new Ably.Realtime({
       authMethod: "POST",
       authUrl: `/api/ably/token?auctionId=${encodeURIComponent(auctionId)}`,
@@ -120,7 +122,7 @@ function LiveAuctionContent() {
       fetch(`/api/auctions?id=${auctionId}`)
         .then((response) => response.json())
         .then((data) => {
-          if (data.state?.currentPrice !== undefined) {
+          if (isMounted && data.state?.currentPrice !== undefined) {
             setCurrentPrice(Number(data.state.currentPrice));
           }
         })
@@ -129,12 +131,13 @@ function LiveAuctionContent() {
 
     function handleBidEvent(message) {
       const event = message.data;
-      if (event?.currentPrice !== undefined) {
+      if (isMounted && event?.currentPrice !== undefined) {
         setCurrentPrice(Number(event.currentPrice));
       }
     }
 
     realtime.connection.on((stateChange) => {
+      if (!isMounted) return;
       setConnectionState(stateChange.current);
       if (stateChange.current === "connected") {
         refreshSnapshot();
@@ -143,8 +146,14 @@ function LiveAuctionContent() {
     channel.subscribe("bid-accepted", handleBidEvent);
 
     return () => {
+      isMounted = false;
       channel.unsubscribe("bid-accepted", handleBidEvent);
-      realtime.close();
+      realtime.connection.off();
+      try {
+        realtime.close();
+      } catch {
+        // Suppress "Connection closed" errors during teardown
+      }
     };
   }, [auctionId, auction]);
 
