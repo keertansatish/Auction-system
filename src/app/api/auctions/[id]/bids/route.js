@@ -5,16 +5,9 @@ import {
   BID_INCREMENT_OPTIONS,
   getAuctionState,
 } from "@/lib/redis/auctions";
+import { isAuctionActive } from "@/lib/auctions/status";
 
 export const runtime = "nodejs";
-
-function isActiveAuction(auction) {
-  const start = new Date(auction.start_time).getTime();
-  const end = new Date(auction.end_time).getTime();
-  const now = Date.now();
-
-  return Number.isNaN(start) || Number.isNaN(end) || (now >= start && now <= end);
-}
 
 export async function POST(request, { params }) {
   const supabase = await createClient();
@@ -35,7 +28,7 @@ export async function POST(request, { params }) {
     }
 
     const { data: auction, error: auctionError } = await supabase
-      .from("Auction")
+      .from("auctions")
       .select("*")
       .eq("id", id)
       .single();
@@ -48,7 +41,7 @@ export async function POST(request, { params }) {
       return Response.json({ error: "Sellers cannot bid on their own auctions." }, { status: 403 });
     }
 
-    if (!isActiveAuction(auction)) {
+    if (!isAuctionActive(auction)) {
       return Response.json({ error: "This auction is not currently active." }, { status: 409 });
     }
 

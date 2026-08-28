@@ -3,7 +3,6 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-
 const initialStatus = { kind: "idle", message: "" };
 
 export default function CreateAuctionPage() {
@@ -21,7 +20,6 @@ export default function CreateAuctionPage() {
       description: formData.get("description"),
       end_time: formData.get("end_time"),
       image_url: formData.get("image_url"),
-      seller_id: formData.get("seller_id"),
       start_time: formData.get("start_time"),
       starting_price: formData.get("starting_price"),
       title: formData.get("title"),
@@ -77,7 +75,7 @@ export default function CreateAuctionPage() {
                 </p>
                 <h1 className="mt-2 text-3xl font-semibold">Auction your item</h1>
                 <p className="mt-2 max-w-xl text-sm text-slate-600">
-                  This form now matches your auction table: seller, title, description, image, starting price, and time-only start/end values.
+                  Add the details for your listing. Your signed-in Supabase account will be saved as the seller automatically.
                 </p>
               </div>
               <span className="rounded-full bg-emerald-50 px-3 py-1 text-sm font-semibold text-emerald-700">
@@ -99,18 +97,6 @@ export default function CreateAuctionPage() {
             ) : null}
 
             <div className="mt-8 grid gap-5 sm:grid-cols-2">
-              <label className="space-y-2">
-                <span className="text-sm font-medium text-slate-700">Seller ID</span>
-                <input
-                  required
-                  type="number"
-                  name="seller_id"
-                  min="1"
-                  step="1"
-                  placeholder="1"
-                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-900"
-                />
-              </label>
 
               <label className="space-y-2 sm:col-span-2">
                 <span className="text-sm font-medium text-slate-700">Title</span>

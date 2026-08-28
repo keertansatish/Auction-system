@@ -3,6 +3,18 @@ import {
   getAuctionState,
   initializeAuctionState,
 } from "@/lib/redis/auctions";
+import {
+  getAuctionStatus,
+  parseAuctionTime,
+} from "@/lib/auctions/status";
+
+function withAuctionStatus(auction, viewerId) {
+  return {
+    ...auction,
+    status: getAuctionStatus(auction),
+    isSeller: Boolean(viewerId && String(auction.seller_id) === String(viewerId)),
+  };
+}
 
 /**
  * GET /api/auctions
@@ -19,10 +31,13 @@ export async function GET(request) {
   const id = searchParams.get("id");
 
   try {
+    const { data: authData } = await supabase.auth.getUser();
+    const viewerId = authData?.user?.id;
+
     if (id) {
       // Fetch a single auction by ID
       const { data, error } = await supabase
-        .from("Auction")
+        .from("auctions")
         .select("*")
         .eq("id", id)
         .single();
@@ -34,13 +49,18 @@ export async function GET(request) {
         );
       }
 
+      const auction = withAuctionStatus(data, viewerId);
       const state = await getAuctionState(data.id);
-      return Response.json({ auction: data, state });
+      return Response.json({
+        auction,
+        isSeller: auction.isSeller,
+        state,
+      });
     }
 
     // Fetch all auctions, newest first
     const { data, error } = await supabase
-      .from("Auction")
+      .from("auctions")
       .select("*")
       .order("created_at", { ascending: false });
 
@@ -51,7 +71,9 @@ export async function GET(request) {
       );
     }
 
-    return Response.json({ auctions: data });
+    return Response.json({
+      auctions: (data ?? []).map((auction) => withAuctionStatus(auction, viewerId)),
+    });
   } catch (err) {
     return Response.json(
       { error: err.message || "Internal server error" },
@@ -70,7 +92,7 @@ export async function GET(request) {
  *   - starting_price (number, required)
  *   - start_time     (string, required – "HH:MM" format)
  *   - end_time       (string, required – "HH:MM" format)
- *   - seller_id      (number, required)
+ *   - seller_id      is taken from the authenticated Supabase user
  *
  * Returns the newly created auction row.
  */
@@ -79,6 +101,25 @@ export async function POST(request) {
 
   try {
     const body = await request.json();
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
+    if (authError) {
+      return Response.json(
+        { error: authError.message },
+        { status: 401 }
+      );
+    }
+
+    if (!user) {
+      return Response.json(
+        { error: "You must be signed in to create an auction." },
+        { status: 401 }
+      );
+    }
+
+    // The authenticated Supabase user ID is the seller ID.
 
     const {
       title,
@@ -87,28 +128,59 @@ export async function POST(request) {
       starting_price,
       start_time,
       end_time,
-      seller_id,
     } = body;
 
     // Basic validation
-    if (!title || !description || !image_url || !starting_price || !start_time || !end_time || !seller_id) {
+    if (!title || !description || !image_url || !starting_price || !start_time || !end_time) {
       return Response.json(
-        { error: "All fields are required: title, description, image_url, starting_price, start_time, end_time, seller_id." },
+        { error: "All fields are required: title, description, image_url, starting_price, start_time, and end_time." },
         { status: 400 }
       );
     }
 
+    const numericStartingPrice = Number(starting_price);
+    const startTimestamp = parseAuctionTime(start_time);
+    const endTimestamp = parseAuctionTime(end_time);
+
+    if (!Number.isFinite(numericStartingPrice) || numericStartingPrice < 0) {
+      return Response.json(
+        { error: "Starting price must be a valid non-negative number." },
+        { status: 400 },
+      );
+    }
+
+    if (!Number.isFinite(startTimestamp) || !Number.isFinite(endTimestamp)) {
+      return Response.json(
+        { error: "Enter valid start and end times." },
+        { status: 400 },
+      );
+    }
+
+    if (startTimestamp <= Date.now()) {
+      return Response.json(
+        { error: "Start time must be after the current time." },
+        { status: 400 },
+      );
+    }
+
+    if (endTimestamp <= startTimestamp) {
+      return Response.json(
+        { error: "End time must be after the start time." },
+        { status: 400 },
+      );
+    }
+
     const { data, error } = await supabase
-      .from("Auction")
+      .from("auctions")
       .insert([
         {
           title,
           description,
           image_url,
-          starting_price: Number(starting_price),
+          starting_price: numericStartingPrice,
           start_time,
           end_time,
-          seller_id: Number(seller_id),
+          seller_id: user.id,
         },
       ])
       .select()
@@ -121,9 +193,10 @@ export async function POST(request) {
       );
     }
 
-    await initializeAuctionState(data);
+    const auction = withAuctionStatus(data, user.id);
+    await initializeAuctionState(auction);
 
-    return Response.json({ auction: data }, { status: 201 });
+    return Response.json({ auction }, { status: 201 });
   } catch (err) {
     return Response.json(
       { error: err.message || "Failed to create auction." },

@@ -4,6 +4,10 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import * as Ably from "ably";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import {
+  AUCTION_STATUS,
+  getAuctionStatus,
+} from "@/lib/auctions/status";
 
 const incrementOptions = [5, 10, 15];
 
@@ -13,6 +17,94 @@ function formatCurrency(value) {
     currency: "USD",
     maximumFractionDigits: 2,
   }).format(value);
+}
+
+const statusLabels = {
+  [AUCTION_STATUS.ACTIVE]: "Live",
+  [AUCTION_STATUS.UPCOMING]: "Upcoming",
+  [AUCTION_STATUS.EXPIRED]: "Past",
+};
+
+const statusClasses = {
+  [AUCTION_STATUS.ACTIVE]: "bg-emerald-500/90",
+  [AUCTION_STATUS.UPCOMING]: "bg-blue-500/90",
+  [AUCTION_STATUS.EXPIRED]: "bg-slate-700/90",
+};
+
+function AuctionCard({ item }) {
+  const itemStatus = item.status ?? getAuctionStatus(item);
+
+  return (
+    <Link
+      href={`/live-auction?id=${item.id}`}
+      className="group overflow-hidden rounded-3xl border border-slate-200 bg-white/90 shadow-sm shadow-slate-200/60 backdrop-blur transition hover:-translate-y-1 hover:shadow-lg hover:shadow-slate-200/80"
+    >
+      <div className="relative h-52 overflow-hidden bg-slate-100">
+        <img
+          src={item.image_url}
+          alt={item.title}
+          className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
+        />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/30 to-transparent" />
+        <span className={`absolute bottom-3 left-3 rounded-full px-3 py-1 text-xs font-semibold text-white backdrop-blur-sm ${statusClasses[itemStatus]}`}>
+          {statusLabels[itemStatus]}
+        </span>
+      </div>
+
+      <div className="p-5">
+        <h3 className="text-lg font-semibold text-slate-900 transition group-hover:text-amber-700">
+          {item.title}
+        </h3>
+        <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-slate-500">
+          {item.description}
+        </p>
+
+        <div className="mt-4 flex items-center justify-between">
+          <div>
+            <p className="text-xs text-slate-400">Starting price</p>
+            <p className="text-lg font-bold text-slate-900">
+              {formatCurrency(Number(item.starting_price ?? 0))}
+            </p>
+          </div>
+          <div className="text-right">
+            <p className="text-xs text-slate-400">Auction time</p>
+            <p className="text-sm font-medium text-slate-700">
+              {item.start_time} – {item.end_time}
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-4">
+          <span className="text-xs text-slate-400">
+            Seller #{item.seller_id}
+          </span>
+          <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700 transition group-hover:bg-amber-100">
+            View details →
+          </span>
+        </div>
+      </div>
+    </Link>
+  );
+}
+
+function AuctionSection({ title, description, items }) {
+  if (items.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="mt-10 first:mt-0">
+      <div className="mb-5">
+        <h2 className="text-2xl font-bold tracking-tight text-slate-900">{title}</h2>
+        <p className="mt-1 text-sm text-slate-500">{description}</p>
+      </div>
+      <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+        {items.map((item) => (
+          <AuctionCard key={item.id} item={item} />
+        ))}
+      </div>
+    </section>
+  );
 }
 
 export default function LiveAuctionPage() {
@@ -44,12 +136,37 @@ function LiveAuctionContent() {
   const [selectedIncrement, setSelectedIncrement] = useState(incrementOptions[0]);
   const [connectionState, setConnectionState] = useState("connecting");
   const [isBidding, setIsBidding] = useState(false);
+  const [isSeller, setIsSeller] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
 
   // All-auctions mode (no ?id=)
   const [auctions, setAuctions] = useState([]);
 
   const [status, setStatus] = useState({ kind: "idle", message: "" });
   const [isLoading, setIsLoading] = useState(true);
+  const auctionStatus = useMemo(
+    () => (auction ? getAuctionStatus(auction, now) : null),
+    [auction, now],
+  );
+  const canBid = auctionStatus === AUCTION_STATUS.ACTIVE && !isSeller && !isBidding;
+  const categorizedAuctions = useMemo(() => {
+    const categories = {
+      [AUCTION_STATUS.ACTIVE]: [],
+      [AUCTION_STATUS.UPCOMING]: [],
+      [AUCTION_STATUS.EXPIRED]: [],
+    };
+
+    auctions.forEach((item) => {
+      categories[getAuctionStatus(item, now)].push(item);
+    });
+
+    return categories;
+  }, [auctions, now]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     async function loadAuctions() {
@@ -70,6 +187,7 @@ function LiveAuctionContent() {
           }
 
           setAuction(data.auction);
+          setIsSeller(Boolean(data.isSeller));
           setCurrentPrice(
             Number(data.state?.currentPrice ?? data.auction.starting_price ?? 0),
           );
@@ -106,7 +224,7 @@ function LiveAuctionContent() {
   }, [auctionId]);
 
   useEffect(() => {
-    if (!auctionId || !auction) {
+    if (!auctionId || !auction || auctionStatus !== AUCTION_STATUS.ACTIVE) {
       return undefined;
     }
 
@@ -155,7 +273,7 @@ function LiveAuctionContent() {
         // Suppress "Connection closed" errors during teardown
       }
     };
-  }, [auctionId, auction]);
+  }, [auctionId, auction, auctionStatus]);
 
   const liveWindow = useMemo(() => {
     if (!auction) {
@@ -171,6 +289,10 @@ function LiveAuctionContent() {
   }
 
   async function handleBid() {
+    if (!canBid) {
+      return;
+    }
+
     setIsBidding(true);
     setStatus({ kind: "idle", message: "" });
 
@@ -211,10 +333,14 @@ function LiveAuctionContent() {
           <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
             <div>
               <p className="text-sm font-semibold uppercase tracking-[0.3em] text-amber-700">
-                Live auction
+                {statusLabels[auctionStatus] ?? "Auction"} auction
               </p>
               <h1 className="mt-2 text-4xl font-bold tracking-tight sm:text-5xl">
-                Bid on the active listing
+                {auctionStatus === AUCTION_STATUS.ACTIVE
+                  ? "Bid on the active listing"
+                  : auctionStatus === AUCTION_STATUS.UPCOMING
+                    ? "This auction is upcoming"
+                    : "This auction has ended"}
               </h1>
             </div>
             <div className="flex gap-3">
@@ -312,11 +438,12 @@ function LiveAuctionContent() {
                       key={amount}
                       type="button"
                       onClick={() => handleIncrement(amount)}
+                      disabled={!canBid}
                       className={`rounded-2xl border px-3 py-3 text-sm font-semibold transition hover:-translate-y-0.5 ${
                         selectedIncrement === amount
                           ? "border-amber-300 bg-amber-400 text-slate-950"
                           : "border-white/10 bg-white/5 text-white hover:bg-white/10"
-                      }`}
+                      } disabled:cursor-not-allowed disabled:opacity-50`}
                     >
                       +{amount}
                     </button>
@@ -326,11 +453,33 @@ function LiveAuctionContent() {
                 <button
                   type="button"
                   onClick={handleBid}
-                  disabled={isBidding}
+                  disabled={!canBid}
                   className="mt-6 w-full rounded-full bg-amber-400 px-6 py-3 text-sm font-semibold text-slate-950 transition hover:-translate-y-0.5 hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {isBidding ? "Placing bid..." : `Bid +${selectedIncrement}`}
+                  {isBidding
+                    ? "Placing bid..."
+                    : isSeller
+                      ? "Seller cannot bid"
+                      : auctionStatus === AUCTION_STATUS.UPCOMING
+                        ? "Auction not started"
+                        : auctionStatus === AUCTION_STATUS.EXPIRED
+                          ? "Auction expired"
+                          : `Bid +${selectedIncrement}`}
                 </button>
+
+                {isSeller ? (
+                  <p className="mt-4 rounded-2xl bg-white/10 px-4 py-3 text-sm font-medium text-slate-300">
+                    You created this auction, so you cannot bid on it.
+                  </p>
+                ) : auctionStatus === AUCTION_STATUS.UPCOMING ? (
+                  <p className="mt-4 rounded-2xl bg-white/10 px-4 py-3 text-sm font-medium text-slate-300">
+                    Bidding will open at {auction.start_time}.
+                  </p>
+                ) : auctionStatus === AUCTION_STATUS.EXPIRED ? (
+                  <p className="mt-4 rounded-2xl bg-white/10 px-4 py-3 text-sm font-medium text-slate-300">
+                    This auction is no longer accepting bids.
+                  </p>
+                ) : null}
 
                 {status.kind === "success" ? (
                   <p className="mt-4 rounded-2xl bg-emerald-500/15 px-4 py-3 text-sm font-medium text-emerald-300">
@@ -407,62 +556,23 @@ function LiveAuctionContent() {
             </Link>
           </div>
         ) : (
-          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            {auctions.map((item) => (
-              <Link
-                key={item.id}
-                href={`/live-auction?id=${item.id}`}
-                className="group overflow-hidden rounded-3xl border border-slate-200 bg-white/90 shadow-sm shadow-slate-200/60 backdrop-blur transition hover:-translate-y-1 hover:shadow-lg hover:shadow-slate-200/80"
-              >
-                {/* Image */}
-                <div className="relative h-52 overflow-hidden bg-slate-100">
-                  <img
-                    src={item.image_url}
-                    alt={item.title}
-                    className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/30 to-transparent" />
-                  <span className="absolute bottom-3 left-3 rounded-full bg-emerald-500/90 px-3 py-1 text-xs font-semibold text-white backdrop-blur-sm">
-                    Live
-                  </span>
-                </div>
-
-                {/* Details */}
-                <div className="p-5">
-                  <h3 className="text-lg font-semibold text-slate-900 group-hover:text-amber-700 transition">
-                    {item.title}
-                  </h3>
-                  <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-slate-500">
-                    {item.description}
-                  </p>
-
-                  <div className="mt-4 flex items-center justify-between">
-                    <div>
-                      <p className="text-xs text-slate-400">Starting price</p>
-                      <p className="text-lg font-bold text-slate-900">
-                        {formatCurrency(Number(item.starting_price ?? 0))}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-xs text-slate-400">Auction time</p>
-                      <p className="text-sm font-medium text-slate-700">
-                        {item.start_time} – {item.end_time}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-4">
-                    <span className="text-xs text-slate-400">
-                      Seller #{item.seller_id}
-                    </span>
-                    <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700 transition group-hover:bg-amber-100">
-                      View & Bid →
-                    </span>
-                  </div>
-                </div>
-              </Link>
-            ))}
-          </div>
+          <>
+            <AuctionSection
+              title="Live auctions"
+              description="Place bids on auctions that are currently active."
+              items={categorizedAuctions[AUCTION_STATUS.ACTIVE]}
+            />
+            <AuctionSection
+              title="Upcoming auctions"
+              description="These auctions will open at their scheduled start time."
+              items={categorizedAuctions[AUCTION_STATUS.UPCOMING]}
+            />
+            <AuctionSection
+              title="Past auctions"
+              description="These auctions have passed their end time and no longer accept bids."
+              items={categorizedAuctions[AUCTION_STATUS.EXPIRED]}
+            />
+          </>
         )}
       </section>
     </main>

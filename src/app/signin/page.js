@@ -20,9 +20,84 @@ export default function SignInPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const isLogin = mode === "login";
   const router = useRouter();
   const supabase = createClient();
+
+  async function handleGoogleSignIn() {
+    setIsGoogleLoading(true);
+    setNotice("");
+
+    const popup = window.open(
+      "about:blank",
+      "myauction-google-auth",
+      "popup,width=500,height=650,resizable=yes,scrollbars=yes",
+    );
+
+    if (!popup) {
+      setIsGoogleLoading(false);
+      setNotice("Please allow pop-ups to sign in with Google.");
+      return;
+    }
+
+    const handlePopupMessage = async (event) => {
+      if (
+        event.origin !== window.location.origin ||
+        event.data?.type !== "myauction-google-auth"
+      ) {
+        return;
+      }
+
+      window.removeEventListener("message", handlePopupMessage);
+
+      if (!event.data.success) {
+        setIsGoogleLoading(false);
+        setNotice("Google sign-in could not be completed. Please try again.");
+        return;
+      }
+
+      const { data } = await supabase.auth.getSession();
+      if (data.session) {
+        router.push("/");
+        router.refresh();
+      } else {
+        setIsGoogleLoading(false);
+        setNotice("Google sign-in could not be completed. Please try again.");
+      }
+    };
+
+    window.addEventListener("message", handlePopupMessage);
+
+    const callbackUrl = new URL("/auth/callback", window.location.origin);
+    callbackUrl.searchParams.set("next", "/");
+    callbackUrl.searchParams.set("popup", "1");
+
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: callbackUrl.toString(),
+        skipBrowserRedirect: true,
+      },
+    });
+
+    if (error) {
+      window.removeEventListener("message", handlePopupMessage);
+      popup.close();
+      setIsGoogleLoading(false);
+      setNotice(error.message);
+      return;
+    }
+
+    if (data?.url) {
+      popup.location.href = data.url;
+    } else {
+      window.removeEventListener("message", handlePopupMessage);
+      popup.close();
+      setIsGoogleLoading(false);
+      setNotice("Unable to start Google sign-in. Please try again.");
+    }
+  }
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -94,7 +169,7 @@ export default function SignInPage() {
           <div className="w-full max-w-md">
             <div className="mb-9"><p className="text-sm font-semibold uppercase tracking-[0.22em] text-indigo-500">Your account</p><h2 className="mt-3 text-3xl font-semibold tracking-[-0.03em] text-[#111832] sm:text-4xl">{isLogin ? "Welcome back." : "Create your account."}</h2><p className="mt-3 text-sm leading-6 text-slate-500">{isLogin ? "Sign in to pick up where you left off." : "Join a community built around the things worth finding."}</p></div>
             <div className="mb-7 grid grid-cols-2 rounded-xl bg-slate-100 p-1 text-sm font-medium"><button type="button" onClick={() => changeMode("login")} className={`rounded-lg px-4 py-2.5 transition ${isLogin ? "bg-white text-[#111832] shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>Log in</button><button type="button" onClick={() => changeMode("signup")} className={`rounded-lg px-4 py-2.5 transition ${!isLogin ? "bg-white text-[#111832] shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>Sign up</button></div>
-            <button type="button" onClick={() => setNotice("Google sign-in will be connected here.")} className="flex w-full items-center justify-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"><span className="flex h-5 w-5 items-center justify-center rounded-full text-sm font-bold text-[#4285f4]">G</span>Continue with Google</button>
+            <button type="button" onClick={handleGoogleSignIn} disabled={isGoogleLoading} className="flex w-full items-center justify-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"><span className="flex h-5 w-5 items-center justify-center rounded-full text-sm font-bold text-[#4285f4]">G</span>{isGoogleLoading ? "Connecting to Google..." : "Continue with Google"}</button>
             <div className="my-6 flex items-center gap-3 text-xs text-slate-400"><span className="h-px flex-1 bg-slate-200" /> or continue with email <span className="h-px flex-1 bg-slate-200" /></div>
             <form onSubmit={handleSubmit} className="space-y-4">
               {!isLogin && (

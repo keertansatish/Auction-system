@@ -1,4 +1,5 @@
 import { getRedis } from "./client";
+import { getAuctionStatus } from "@/lib/auctions/status";
 
 export const BID_INCREMENT_OPTIONS = [5, 10, 15];
 
@@ -16,7 +17,7 @@ export async function initializeAuctionState(auction) {
     sellerId: String(auction.seller_id),
     startTime: auction.start_time,
     endTime: auction.end_time,
-    status: "active",
+    status: getAuctionStatus(auction),
     lastBidderId: "",
     updatedAt: now,
   });
@@ -32,13 +33,22 @@ export async function getAuctionState(auctionId) {
     return null;
   }
 
+  const status = getAuctionStatus({
+    start_time: state.startTime,
+    end_time: state.endTime,
+  });
+
+  if (status !== state.status) {
+    await redis.hset(auctionKey(auctionId), { status });
+  }
+
   return {
     currentPrice: Number(state.currentPrice),
     startingPrice: Number(state.startingPrice),
     sellerId: String(state.sellerId),
     startTime: state.startTime,
     endTime: state.endTime,
-    status: state.status,
+    status,
     lastBidderId: state.lastBidderId || null,
     updatedAt: state.updatedAt,
   };
